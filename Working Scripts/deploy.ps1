@@ -5,33 +5,39 @@ $Node01 = "MCDHCI1"
 #Set Name of Node02
 $Node02 = "MCDHCI2"
 
+#Set IP for MGMT Node1 Nic
+$node01_MgmtIP=""
+
+#Set IP for MGMT Node2 Nic
+$node02_MgmtIP=""
+
 #Set Default GW IP
-$GWIP = "10.50.10.1"
+$GWIP = ""
 
 #Set IP of AD DNS Server
-$DNSIP = "10.20.200.40", "14.0.0.36"
+$DNSIP = "172.16.100.20"
 
 #Set Server List 
 $ServerList = $Node01, $Node02
 
 #Set Cluster Name and Cluster IP
 $ClusterName = "mcdhcicl"
-$ClusterIP = "10.50.10.40"
+$ClusterIP = ""
 
 #Set StoragePool Name
-$global:StoragePoolName= "ASHCI Storage Pool 1"
+$StoragePoolName= "ASHCI Storage Pool 1"
 
 #Set name of AD Domain
-$ADDomain = "mycloudacademy.org"
+$ADDomain = "mcd.local"
 
 #Set AD Domain Cred
 $ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
-$ADCred = New-Object System.Management.Automation.PSCredential ("mca\mgodfre3", $ADpassword)
+$ADCred = New-Object System.Management.Automation.PSCredential ("mcd\djoiner", $ADpassword)
 
 #Set Cred for AAD tenant and subscription
-$AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
+$AADAccount = ""
 $AADpassword = ConvertTo-SecureString "" -AsPlainText -Force
-$AADCred = New-Object System.Management.Automation.PSCredential ("azstackadmin@azurestackdemo1.onmicrosoft.com", $AADpassword)
+$AADCred = New-Object System.Management.Automation.PSCredential ("", $AADpassword)
 $AzureSubID = ""
 ###############################################################################################################################
 
@@ -44,7 +50,7 @@ Install-WindowsFeature -Name RSAT-Clustering,RSAT-Clustering-Mgmt,RSAT-Clusterin
 ##########################################Configure Nodes####################################################################
 #Add features, add PS modules, rename, join domain, reboot
 Invoke-Command -ComputerName $ServerList -Credential $ADCred -ScriptBlock {
-    Install-WindowsFeature -Name "BitLocker", "Data-Center-Bridging", "Failover-Clustering", "FS-FileServer", "FS-Data-Deduplication", "Hyper-V", "Hyper-V-PowerShell", "RSAT-AD-Powershell", "RSAT-Clustering-PowerShell", "Storage-Replica", "NetworkATC" -IncludeAllSubFeature -IncludeManagementTools
+    Install-WindowsFeature -Name "BitLocker", "Data-Center-Bridging", "Failover-Clustering", "FS-FileServer", "FS-Data-Deduplication", "Hyper-V", "Hyper-V-PowerShell", "RSAT-AD-Powershell", "RSAT-Clustering,"FS-Data-Deduplication",PowerShell", "Storage-Replica", "NetworkATC" -IncludeAllSubFeature -IncludeManagementTools
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
     Install-Module -Name Az.StackHCI -Force -All
 }
@@ -59,25 +65,28 @@ sleep 180
 Invoke-Command -ComputerName $Node01 -Credential $ADCred -ScriptBlock {
 
 # Configure IP and subnet mask, no default gateway for Storage interfaces
+    #MGMT
+    New-NetIPAddress -InterfaceAlias "LOM1 Port 3" -IPAddress $using:node01_MgmtIP -PrefixLength 24 | Set-DnsClientServerAddress -ServerAddresses $DNSIP
+    #Storage 
     New-NetIPAddress -InterfaceAlias "LOM1 Port 1" -IPAddress 172.16.0.1 -PrefixLength 24
     New-NetIPAddress -InterfaceAlias "LOM1 Port 2" -IPAddress 172.16.1.1 -PrefixLength 24
 
-#Add Temp NetIntent until Cluster is built
-Add-NetIntent -ComputerName $Node01  -AdapterName "LOM Port 3", "LOM Port 4" -Name TempNSIntent -Compute -Management 
+ 
 
 }
 
 
 ############################################################Configure Node02#############################################################
-#Create SET vSwitches, enable RDMA, set MGMT vNIC, Configure Storage NICs
+
 Invoke-Command -ComputerName $Node02 -Credential $ADCred -ScriptBlock {
     # Configure IP and subnet mask, no default gateway for Storage interfaces
+    #MGMT
+    New-NetIPAddress -InterfaceAlias "LOM1 Port 3" -IPAddress $using:node02_MgmtIP -PrefixLength 24 | Set-DnsClientServerAddress -ServerAddresses $DNSIP
+    #Storage 
     New-NetIPAddress -InterfaceAlias "LOM Port 1" -IPAddress 172.16.0.2 -PrefixLength 24
     New-NetIPAddress -InterfaceAlias "LOM Port 2" -IPAddress 172.16.1.2 -PrefixLength 24
 
-    #Add Temp NetIntent until Cluster is built
-    Add-NetIntent -ComputerName $Node02  -AdapterName "LOM Port 3", "LOM Port 4" -Name TempNSIntent -Compute -Management 
-  
+    
 
 }
 #########################################################################################################################################
@@ -144,41 +153,25 @@ Invoke-Command ($Node01) {
 New-StorageTier -StoragePoolFriendlyName $global:StoragePoolName -FriendlyName NestedMirror -ResiliencySettingName Mirror -MediaType HDD -NumberOfDataCopies 4 -ProvisioningType Thin
 
 #Create Nested Mirror Volume
-New-Volume -StoragePoolFriendlyName $global:StoragePoolName -FriendlyName Volume01-Thin -StorageTierFriendlyNames NestedMirror -StorageTierSizes 5GB -ProvisioningType Thin
+New-Volume -StoragePoolFriendlyName $global:StoragePoolName -FriendlyName Volume01-Thin -StorageTierFriendlyNames NestedMirror -StorageTierSizes 5GB -ProvisioningType Thin | Enable-DedupVolume -Volume -UsageType HyperV
 }
 
 
 
 ############################################################Set Net-Intent on Node01########################################################
-Invoke-Command ($Node01) {
-
-#Remove-TempNetIntent
-Remove-NetIntent -Name TempNSIntent
+Invoke-Command -ComputerName $Node01 {
 
 #North-South Net-Intents
-Add-NetIntent -ClusterName $ClusterName -AdapterName "LOM Port 3", "LOM Port 4" -Name HCI -Compute -Management  
+Add-NetIntent -ClusterName $using:ClusterName -AdapterName "LOM Port 3", "LOM Port 4" -Name HCI -Compute -Management  
 
 #Storage NetIntent
-Add-NetIntent -ClusterName $ClusterName -AdapterName "LOM1 Port 1", "LOM1 Port 2"  -Name SMB -Storage
+Add-NetIntent -ClusterName $using:ClusterName -AdapterName "LOM1 Port 1", "LOM1 Port 2"  -Name SMB -Storage
 }
 
 
 #########################################################################################################################################
 
-
-############################################################Set Net-Intent on Node01########################################################
-Invoke-Command ($Node02) {
-
-#Remove-TempNetIntent
-Remove-NetIntent -Name TempNSIntent
-
-}
-
-#########################################################################################################################################
-
-#CAN'T SET THIN!!! 
-Set-StoragePool -CimSession $ClusterName -FriendlyName $StoragePoolName -ResiliencySettingNameDefault Mirror  
-
+<#
 #Configure for 21H2 Preview Channel
 Invoke-Command ($ServerList) {
     Set-WSManQuickConfig -Force
@@ -190,9 +183,10 @@ Invoke-Command ($ServerList) {
 Restart-Computer -ComputerName $ServerList -Protocol WSMan -Wait -For PowerShell -Force
 #Pause for a bit - let changes apply before moving on...
 sleep 180
+#>
 
 #Enable CAU and update to latest 21H2 bits...
-$CAURoleName="HCICLUS-CAU"
+$CAURoleName="ASHCICL-CAU"
 Add-CauClusterRole -ClusterName $ClusterName -MaxFailedNodes 0 -RequireAllNodesOnline -EnableFirewallRules -VirtualComputerObjectName $CAURoleName -Force -CauPluginName Microsoft.WindowsUpdatePlugin -MaxRetriesPerNode 3 -CauPluginArguments @{ 'IncludeRecommendedUpdates' = 'False' } -StartDate "3/2/2017 3:00:00 AM" -DaysOfWeek 4 -WeeksOfMonth @(3) -verbose
 #Invoke-CauScan -ClusterName GBLRHSHCICLUS -CauPluginName "Microsoft.RollingUpgradePlugin" -CauPluginArguments @{'WuConnected'='true';} -Verbose | fl *
 Invoke-CauRun -ClusterName $ClusterName -CauPluginName "Microsoft.RollingUpgradePlugin" -CauPluginArguments @{'WuConnected'='true';} -Verbose -EnableFirewallRules -Force
@@ -204,7 +198,7 @@ Set-ClusterQuorum -Cluster $ClusterName -Credential $AADCred -CloudWitness -Acco
 
 
 #Register Cluster with Azure
-Invoke-Command ($Node01) {
+Invoke-Command -ComputerName $Node01 {
     Connect-AzAccount -Credential $using:AADCred
     $armtoken = Get-AzAccessToken
     $graphtoken = Get-AzAccessToken -ResourceTypeName AadGraph
