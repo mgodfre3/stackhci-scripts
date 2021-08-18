@@ -27,18 +27,24 @@ $ClusterIP = ""
 #Set StoragePool Name
 $StoragePoolName= "ASHCI Storage Pool 1"
 
+#Set First Cluster Shared Volume Friendly Info
+$CSVFriendlyname="Volume01-Thin"
+$CSVSize=5GB
+
 #Set name of AD Domain
 $ADDomain = "mcd.local"
 
 #Set AD Domain Cred
-$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
-$ADCred = New-Object System.Management.Automation.PSCredential ("mcd\djoiner", $ADpassword)
+$AzDJoin = Get-AzKeyVaultSecret -VaultName 'MCD-CNUS-KV' -Name "DomainJoinerSecret"
+$cred = [pscredential]::new("mcd\djoiner",$AZDJoin.SecretValue)
+#$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
+#$ADCred = New-Object System.Management.Automation.PSCredential ("mcd\djoiner", $ADpassword)
 
 #Set Cred for AAD tenant and subscription
-$AADAccount = ""
-$AADpassword = ConvertTo-SecureString "" -AsPlainText -Force
-$AADCred = New-Object System.Management.Automation.PSCredential ("", $AADpassword)
-$AzureSubID = ""
+$AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
+$AADAdmin=Get-AzKeyVaultSecret -VaultName 'MCD-CNUS-KV' -Name "AADAdmin"
+$AADCred = [pscredential]::new("azstackadmin@azurestackdemo1.onmicrosoft.com",$AADAdmin.SecretValue)
+$AzureSubID = "0c6c3a0d-0866-4e68-939d-ef81ca6f802e"
 ###############################################################################################################################
 
 #Set WinRM for remote management of nodes
@@ -150,10 +156,11 @@ Update-StoragePool -FriendlyName $StoragePoolName -Confirm:0
 
 Invoke-Command ($Node01) {
     #Create Storage Tier for Nested Resiliancy
-New-StorageTier -StoragePoolFriendlyName $global:StoragePoolName -FriendlyName NestedMirror -ResiliencySettingName Mirror -MediaType HDD -NumberOfDataCopies 4 -ProvisioningType Thin
+New-StorageTier -StoragePoolFriendlyName $using:StoragePoolName -FriendlyName NestedMirror -ResiliencySettingName Mirror -MediaType HDD -NumberOfDataCopies 4 -ProvisioningType Thin
 
 #Create Nested Mirror Volume
-New-Volume -StoragePoolFriendlyName $global:StoragePoolName -FriendlyName Volume01-Thin -StorageTierFriendlyNames NestedMirror -StorageTierSizes 5GB -ProvisioningType Thin | Enable-DedupVolume -Volume -UsageType HyperV
+New-Volume -StoragePoolFriendlyName $using:StoragePoolName -FriendlyName $using:CSVFriendlyname -StorageTierFriendlyNames NestedMirror -StorageTierSizes $using:CSVSize -ProvisioningType Thin | Enable-DedupVolume -UsageType HyperV 
+
 }
 
 
