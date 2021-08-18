@@ -8,14 +8,6 @@ $Node02 = "MCDHCI2"
 #Set Default GW IP
 $GWIP = "10.50.10.1"
 
-#Set Compute vSwitch Names
-$vSwitch1 = "XXXXX"
-$vSwitch2 = "XXXXX"
-
-#Set Host vNIC Name and Alias
-$HostvNIC = "vNIC-Host"
-$HostvNICAlias = "vEthernet (" + $HostvNIC + ")"
-
 #Set IP of AD DNS Server
 $DNSIP = "10.20.200.40", "14.0.0.36"
 
@@ -33,15 +25,14 @@ $global:StoragePoolName= "ASHCI Storage Pool 1"
 $ADDomain = "mycloudacademy.org"
 
 #Set AD Domain Cred
-$ADpassword = ConvertTo-SecureString "FlynnAndrea2018!!" -AsPlainText -Force
+$ADpassword = ConvertTo-SecureString "" -AsPlainText -Force
 $ADCred = New-Object System.Management.Automation.PSCredential ("mca\mgodfre3", $ADpassword)
 
 #Set Cred for AAD tenant and subscription
 $AADAccount = "azstackadmin@azurestackdemo1.onmicrosoft.com"
-$AADpassword = ConvertTo-SecureString "AzureHybridRocks1!
-" -AsPlainText -Force
+$AADpassword = ConvertTo-SecureString "" -AsPlainText -Force
 $AADCred = New-Object System.Management.Automation.PSCredential ("azstackadmin@azurestackdemo1.onmicrosoft.com", $AADpassword)
-$AzureSubID = "0c6c3a0d-0866-4e68-939d-ef81ca6f802e"
+$AzureSubID = ""
 ###############################################################################################################################
 
 #Set WinRM for remote management of nodes
