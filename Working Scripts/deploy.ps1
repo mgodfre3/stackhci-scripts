@@ -79,7 +79,8 @@ Enable-WSManCredSSP -Role Client -DelegateComputer * -Force
 Write-Host -ForegroundColor Green -Object "Installing Required Features on Management Workstation"
 
 #Install some PS modules if not already installed
-Install-WindowsFeature -Name RSAT-Clustering,RSAT-Clustering-Mgmt,RSAT-Clustering-PowerShell,RSAT-Hyper-V-Tools
+Install-WindowsFeature -Name RSAT-Clustering,RSAT-Clustering-Mgmt,RSAT-Clustering-PowerShell,RSAT-Hyper-V-Tools;
+Install-Module AZ.ConnectedMachine -force
 
 ##########################################Configure Nodes####################################################################
 
@@ -91,6 +92,8 @@ Invoke-Command -ComputerName $ServerList -Credential $ADCred -ScriptBlock {
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
     Install-Module -Name Az.StackHCI -Force -All
     Enable-WSManCredSSP -Role Server -Force
+    New-NetFirewallRule -DisplayName “ICMPv4” -Direction Inbound -Action Allow -Protocol icmpv4 -Enabled True -force
+    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" –Value 0
 }
 
                
@@ -171,10 +174,10 @@ Clear-DnsClientCache
 Get-ClusterNetwork -Cluster $ClusterName  | ft Name, Role, Address
 
 # Change the cluster network names so they are consistent with the individual nodes
-(Get-ClusterNetwork -Cluster $ClusterName -Name "Cluster Network 2").Name = "Storage1"
-(Get-ClusterNetwork -Cluster $ClusterName -Name "Cluster Network 1").Name = "Storage2"
-(Get-ClusterNetwork -Cluster $ClusterName -Name "Cluster Network 4").Name = "OOB"
-(Get-ClusterNetwork -Cluster $ClusterName -Name "Cluster Network 3").Name = "MGMT"
+(Get-ClusterNetwork -Cluster $ClusterName  | where-object address -like "172.16.0.0").Name = "Storage1"
+(Get-ClusterNetwork -Cluster $ClusterName  | where-object address -like "172.16.1.0").Name = "Storage2"
+(Get-ClusterNetwork -Cluster $ClusterName  | where-object address -like "").Name = "OOB"
+(Get-ClusterNetwork -Cluster $ClusterName  | where-object address -like "192.168.0.0").Name = "MGMT"
 
 # Check to make sure the cluster network names were changed correctly
 Get-ClusterNetwork -Cluster $ClusterName | ft Name, Role, Address
@@ -256,8 +259,23 @@ $tnc_clip=Test-NetConnection $ClusterIP
 if ($tnc_clip.pingsucceded -eq "true") {
     write-host -ForegroundColor Green -Object "Cluster in online, NetworkATC was successful"
 }
-else  {
-    Write-Host -ForegroundColor Red -Object "Please ensure Cluster Resources are online and Network configration is correct on nodes";
+
+elseif ($tnc_clip.pingsucceded -eq "false") {
+    Start-ClusterResource -Cluster $ClusterName -Name Cluster IP Address
+   Start-Sleep 15
+}
+ 
+ $tnc_clip2=Test-NetConnection $ClusterIP
+
+if ( $tnc_clip2.pingsucceded -eq "true") {
+
+write-host -ForegroundColor Green -Object "Cluster in online, NetworkATC was successful"
+}
+
+else {
+
+Write-Host -ForegroundColor Red -Object "Please ensure Cluster Resources are online and Network configration is correct on nodes";
+
     Start-Sleep 180
 }
 
@@ -300,7 +318,71 @@ Invoke-Command -ComputerName $Node01 {
     $graphtoken = Get-AzAccessToken -ResourceTypeName AadGraph
     Register-AzStackHCI -SubscriptionId $using:AzureSubID -ComputerName $using:Node01 -AccountId $using:AADAccount -ArmAccessToken $armtoken.Token -GraphAccessToken $graphtoken.Token -EnableAzureArcServer -Credential $using:ADCred 
 }
+
+
 ############################################################################################################################################
+write-host -ForegroundColor Green -Object "Register the Azure ARC Agent on each node"
+
+$rg=Get-AzResourceGroup | where ResourceGroupName -Like "$ClusterName*"
+
+#Node01 ARC Agent Check
+
+$arm_machine_node01=ForEach ($r in $rg.resourcegroupname) {Get-AzConnectedMachine -Name $Node01 -ResourceGroupName $r}
+
+
+if ($arm_machine_node01.Status -eq "Connected") { 
+Write-host -ForegroundColor Green -Object "$node01 is connected to ARC...Horray!"
+} 
+else {
+InstallARCAgent
+}
+
+
+#Node02 ARC Agent Check
+
+$rg_node2=Get-AzResourceGroup | where ResourceGroupName -Like "$ClusterName*"
+
+$arm_machine_node02=ForEach ($r in $rg.resourcegroupname) {Get-AzConnectedMachine -Name $Node02 -ResourceGroupName $r}
+
+
+if ($arm_machine_node02.Status -eq "Connected") { 
+Write-host -ForegroundColor Green -Object "$node02 is connected to ARC...Horray!"
+}
+else {
+InstallARCAgent
+}
+
+
+
+function InstallArcAgent{
+
+
+
+    # Add the service principal application ID and secret here
+    $servicePrincipalClientId="6c3ca5a9-ddad-4183-a824-dcf4975ee2bc"
+    $servicePrincipalSecret=$ARCSecret
+
+    Invoke-Command -ComputerName $ServerList -ScriptBlock {
+    # Download the package
+    function download() {$ProgressPreference="SilentlyContinue"; Invoke-WebRequest -Uri https://aka.ms/AzureConnectedMachineAgent -OutFile AzureConnectedMachineAgent.msi}
+    download
+
+    # Install the package
+    $exitCode = (Start-Process -FilePath msiexec.exe -ArgumentList @("/i", "AzureConnectedMachineAgent.msi" ,"/l*v", "installationlog.txt", "/qn") -Wait -Passthru).ExitCode
+    if($exitCode -ne 0) {
+        $message=(net helpmsg $exitCode)
+        throw "Installation failed: $message See installationlog.txt for additional details."
+    }
+
+    # Run connect command
+    & "$env:ProgramW6432\AzureConnectedMachineAgent\azcmagent.exe" connect --service-principal-id "$using:servicePrincipalClientId" --service-principal-secret "$using:servicePrincipalSecret" --resource-group "MCD-Identity" --tenant-id "ebc762d5-57e5-4ed1-9b32-a9524c3396b6" --location "centralus" --subscription-id "0c6c3a0d-0866-4e68-939d-ef81ca6f802e" --cloud "AzureCloud" --tags "Datacenter=Kevin-Colo,City=St.Louis,StateOrDistrict=MO,CountryOrRegion=UnitedStates" --correlation-id "c2de33f9-2186-4754-a8bc-33dedd20100d"
+
+    if($LastExitCode -eq 0){Write-Host -ForegroundColor yellow "To view your onboarded server(s), navigate to https://portal.azure.com/#blade/HubsExtension/BrowseResource/resourceType/Microsoft.HybridCompute%2Fmachines"}
+
+    }
+
+}
+
 
 
 write-host -ForegroundColor Green -Object "Cluster is Deployed; Enjoy!"
