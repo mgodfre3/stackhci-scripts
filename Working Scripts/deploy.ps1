@@ -73,7 +73,7 @@ Write-Host -ForegroundColor Green -Object "Configuring Managment Workstation"
 
 #Set WinRM for remote management of nodes
 winrm quickconfig
-Enable-WSManCredSSP -Role Client -DelegateComputer *
+Enable-WSManCredSSP -Role Client -DelegateComputer * -Force
 
 ###############################################################################################################################
 Write-Host -ForegroundColor Green -Object "Installing Required Features on Management Workstation"
@@ -90,7 +90,7 @@ Invoke-Command -ComputerName $ServerList -Credential $ADCred -ScriptBlock {
     Install-WindowsFeature -Name "BitLocker", "Data-Center-Bridging", "Failover-Clustering", "FS-FileServer", "FS-Data-Deduplication", "Hyper-V", "Hyper-V-PowerShell", "RSAT-AD-Powershell", "RSAT-Clustering-Powershell","FS-Data-Deduplication", "Storage-Replica", "NetworkATC" -IncludeAllSubFeature -IncludeManagementTools
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
     Install-Module -Name Az.StackHCI -Force -All
-    Enable-WSManCredSSP -Role Server
+    Enable-WSManCredSSP -Role Server -Force
 }
 
                
@@ -252,6 +252,14 @@ Add-NetIntent -ClusterName $using:ClusterName -AdapterName "LOM2 Port3", "LOM2 P
 Add-NetIntent -ClusterName $using:ClusterName -AdapterName "LOM1 Port1", "LOM1 Port2"  -Name SMB -Storage
 }
 
+$tnc_clip=Test-NetConnection $ClusterIP
+if ($tnc_clip.pingsucceded -eq "true") {
+    write-host -ForegroundColor Green -Object "Cluster in online, NetworkATC was successful"
+}
+else  {
+    Write-Host -ForegroundColor Red -Object "Please ensure Cluster Resources are online and Network configration is correct on nodes";
+    Start-Sleep 180
+}
 
 #########################################################################################################################################
 
